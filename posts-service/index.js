@@ -88,7 +88,6 @@ class SimplePubSub {
 }
 
 const pubsub = new SimplePubSub();
-
 const POST_CREATED = "POST_CREATED";
 
 // Define GraphQL Schema
@@ -137,10 +136,7 @@ const resolvers = {
 
 // Create Express app
 const app = express();
-app.use(cors({
-  origin: "http://localhost:3000", // Replace with your client's origin
-  credentials: true,
-}));
+app.use(cors({ origin: "*", credentials: true }));
 app.use(bodyParser.json());
 
 // Create GraphQL schema
@@ -155,21 +151,34 @@ const wsServer = new WebSocketServer({
   path: "/graphql",
 });
 
+// Ensure WebSocket context includes pubsub
 useServer(
   {
     schema,
-    onConnect: (ctx) => {
-      console.log("Client connected:", ctx);
-    },
-    onDisconnect: (ctx, code, reason) => {
-      console.log("Client disconnected:", { code, reason });
-    },
+    context: () => ({ pubsub }), // ✅ Fix: Ensure pubsub is available for subscriptions
+    onConnect: () => console.log("🔗 WebSocket Connected"),
+    onDisconnect: () => console.log("❌ WebSocket Disconnected"),
   },
   wsServer
 );
 
-// Create Apollo Server
-const server = new ApolloServer({ schema });
+// Create Apollo Server with proper context
+const server = new ApolloServer({
+  schema,
+  context: async () => ({ pubsub }), // ✅ Fix: Pass pubsub to the main context
+  plugins: [
+    {
+      async serverWillStart() {
+        return {
+          async drainServer() {
+            console.log("🛑 Draining WebSocket server...");
+            await wsServer.close();
+          },
+        };
+      },
+    },
+  ],
+});
 
 async function startServer() {
   await server.start();
