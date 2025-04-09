@@ -8,7 +8,7 @@ The repository consists of the following services:
 
 - **`users-service`** – Demonstrates a simple user database.
 - **`post-service`** – Manages user posts, including creation, retrieval, and deletion.
-- **`simple-app`** – A basic table app that displays the posts created by the users.
+- **`app`** – A basic table app that displays the posts created by the users.
 - **`be-post-persister`** – Subscribes to any new messages and inserts them to 'posts' table.
 - **`be-post-sub`** – Generates synthetic post data and publishes them.
 
