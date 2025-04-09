@@ -1,10 +1,52 @@
 // posts-service/index.js
-const { ApolloServer, gql } = require('apollo-server');
+const { createServer } = require('http');
+const { WebSocketServer } = require('ws');
+const { useServer } = require('graphql-ws/lib/use/ws');
+const { ApolloServer } = require('@apollo/server');
+const { expressMiddleware } = require('@apollo/server/express4');
+const { ApolloServerPluginDrainHttpServer } = require('@apollo/server/plugin/drainHttpServer');
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const { makeExecutableSchema } = require('@graphql-tools/schema');
 const { PrismaClient } = require('@prisma/client');
+const { EventEmitter } = require('events');
+
+// Custom LocalPubSub to replace broken graphql-subscriptions
+class LocalPubSub {
+  constructor() {
+    this.ee = new EventEmitter();
+  }
+
+  publish(event, payload) {
+    this.ee.emit(event, payload);
+  }
+
+  asyncIterator(event) {
+    const ee = this.ee;
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            return new Promise((resolve) => {
+              const handler = (data) => {
+                ee.removeListener(event, handler);
+                resolve({ value: data, done: false });
+              };
+              ee.on(event, handler);
+            });
+          },
+        };
+      },
+    };
+  }
+}
 
 const prisma = new PrismaClient();
+const pubsub = new LocalPubSub();
+const POST_CREATED = 'POST_CREATED';
 
-const typeDefs = gql`
+const typeDefs = `#graphql
   type Post {
     id: Int!
     title: String!
@@ -13,32 +55,62 @@ const typeDefs = gql`
 
   type Query {
     posts: [Post!]!
-    post(id: Int!): Post
   }
 
   type Mutation {
     createPost(title: String!, content: String!): Post!
-    updatePost(id: Int!, title: String, content: String): Post!
-    deletePost(id: Int!): Post!
+  }
+
+  type Subscription {
+    postCreated: Post!
   }
 `;
 
 const resolvers = {
   Query: {
     posts: () => prisma.post.findMany(),
-    post: (_, args) => prisma.post.findUnique({ where: { id: args.id } }),
   },
   Mutation: {
-    createPost: (_, args) => prisma.post.create({ data: args }),
-    updatePost: (_, args) =>
-      prisma.post.update({ where: { id: args.id }, data: args }),
-    deletePost: (_, args) =>
-      prisma.post.delete({ where: { id: args.id } }),
+    createPost: async (_, args) => {
+      const post = await prisma.post.create({ data: args });
+      pubsub.publish(POST_CREATED, { postCreated: post });
+      return post;
+    },
+  },
+  Subscription: {
+    postCreated: {
+      subscribe: () => pubsub.asyncIterator(POST_CREATED),
+    },
   },
 };
 
-const server = new ApolloServer({ typeDefs, resolvers });
+async function startServer() {
+  const app = express();
+  const httpServer = createServer(app);
 
-server.listen({ port: 4002 }).then(({ url }) => {
-  console.log(`🚀 Posts service ready at ${url}`);
-});
+  const schema = makeExecutableSchema({ typeDefs, resolvers });
+
+  const wsServer = new WebSocketServer({
+    server: httpServer,
+    path: '/graphql',
+  });
+
+  const serverCleanup = useServer({ schema }, wsServer);
+
+  const server = new ApolloServer({
+    schema,
+    plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+  });
+
+  await server.start();
+
+  app.use('/graphql', cors(), express.json(), expressMiddleware(server));
+
+  const PORT = 4002;
+  httpServer.listen(PORT, () => {
+    console.log(`🚀 Posts service running at http://localhost:${PORT}/graphql`);
+    console.log(`📡 Subscriptions ready at ws://localhost:${PORT}/graphql`);
+  });
+}
+
+startServer();
