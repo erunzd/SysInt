@@ -22,3 +22,5 @@ The repository consists of the following services:
 - **ActiveMQ** 
 
 ## 🚀 Getting Started
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/9543b8b7-19ce-4c8e-ac27-ae8f68b4c456" />
